@@ -1516,7 +1516,14 @@ class KGUV9DPlusRadio(chirp_common.CloneModeRadio,
             mem.mode = "FM"
         else:
             mem.mode = "NFM"
-        #  qt has no home in the UI
+        mem.extra = RadioSettingGroup("extra", "Extra")
+        qt_idx = int(_mem.qt) if int(_mem.qt) < len(SPMUTE_LIST) else 0
+        rs = RadioSetting("qt", "SP Mute",
+                          RadioSettingValueList(SPMUTE_LIST,
+                                               current_index=qt_idx))
+        rs.set_doc("Speaker mute mode: QT=tone squelch only, "
+                   "QT*T=QT and DCS, QT&T=QT or DCS")
+        mem.extra.append(rs)
         return mem
 
     def _set_tone(self, mem, _mem):
@@ -1620,8 +1627,11 @@ class KGUV9DPlusRadio(chirp_common.CloneModeRadio,
         else:
             _mem.pwr = True
 
-        # Set fields we can't access via the UI table to safe defaults
-        _mem.qt = 0   # mute mode to QT
+        # Set fields from extras or fall back to safe defaults
+        if mem.extra:
+            for setting in mem.extra:
+                if setting.get_name() == "qt":
+                    _mem.qt = SPMUTE_LIST.index(str(setting.value))
         _mem.bit5 = 0   # clear this bit to ensure accurate CPS power level
         _nam.name = str2name(mem.name, 8, '\0', '\0')
         _mem.state = MEM_VALID
