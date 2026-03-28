@@ -14,6 +14,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import logging
+import os
 import time
 
 from chirp import (
@@ -54,7 +55,7 @@ struct {
      busy_lock:1;
   u8 unknown3:7,
      wide:1;
-  u8 unknown4;
+  u8 alarm;               // 0=Off 1=AM-R 2=AM-RT 3=AM-T
 } vfo;
 
 #seekto 0x0100;
@@ -74,7 +75,7 @@ struct {
      busy_lock:1;
   u8 unknown3:7,
      wide:1;
-  u8 unknown4;
+  u8 alarm;               // 0=Off 1=AM-R 2=AM-RT 3=AM-T
 } memory[401];
 
 #seekto 0x1B00;
@@ -86,28 +87,28 @@ struct {
 struct {
   u8 squelch;           // 0x0020: 0-9
   u8 vfo_step;          // 0x0021: 0-8
-  u8 pf_top_long;       // 0x0022: 1-13
+  u8 pf_top_long;       // 0x0022: 0=OFF 1-13
   u8 beep;              // 0x0023: 0=OFF 1=ON
   u8 battery_save;      // 0x0024: 0=OFF 1=ON
   u8 unknown_25;
   u8 voice;             // 0x0026: 0=OFF 2=ON
-  u8 unknown_27;
+  u8 reverse_freq;      // 0x0027: 0=OFF 1=ON
   u8 tot;               // 0x0028: 0=OFF 1-60 (x15s)
-  u8 pf_top_short;      // 0x0029: 1-13
-  u8 pf2_long;          // 0x002A: 1-13
-  u8 unknown_2b;
+  u8 pf_top_short;      // 0x0029: 0=OFF 1-13
+  u8 pf2_long;          // 0x002A: 0=OFF 1-13
+  u8 b_ptt_enable;      // 0x002B: 0=enabled 1=disabled (inverted)
   u8 auto_lock;         // 0x002C: 0=OFF 1-6 (x10s)
   u8 work_mode;         // 0x002D: 0=Freq 1=Ch/Freq 2=Ch/Num 3=Ch/Name
   u8 scan_mode;         // 0x002E: 0=CO 1=TO 2=SE
-  u8 unknown_2f;
+  u8 tx_inhibit;        // 0x002F: 0=OFF 1=ON
   u8 startup_display;   // 0x0030: 0=Message 1=Voltage
-  u8 unknown_31;
+  u8 dual_rx;           // 0x0031: 0=OFF 1=ON
   u8 roger;             // 0x0032: 0=OFF 1=BOT 2=EOT 3=BOTH
-  u8 unknown_33;
+  u8 rpt_rct;           // 0x0033: 0=OFF 1=ON
   u8 backlight;         // 0x0034: 0=OFF 1-30 31=ALWAYS
   u8 repeater;          // 0x0035: 0=OFF 1=ON (VFO repeater offset enable)
   ul16 active_channel;  // 0x0036-0x0037: 1-400
-  u8 unknown_38[4];     // 0x0038-0x003B
+  lbcd slip_freq[4];    // 0x0038-0x003B: BCD frequency
   u8 vox;               // 0x003C: 0=OFF 1-9
   u8 toa;               // 0x003D: 0=OFF 1-10
   u8 unknown_3e;
@@ -124,23 +125,24 @@ struct {
   u8 tone_save;         // 0x004D: 0=RX 1=TX 2=TX+RX
   u8 priority_scan;     // 0x004E: 0=OFF 1=ON
   u8 call_reset;        // 0x004F: 0-60s
-  u8 unknown_50[3];     // 0x0050-0x0052
-  u8 pf1_short;         // 0x0053: 1-13
-  u8 pf1_long;          // 0x0054: 1-13
-  u8 pf2_short;         // 0x0055: 1-13
+  u8 scan_group;        // 0x0050: scan group selection
+  u8 unknown_51[2];     // 0x0051-0x0052
+  u8 pf1_short;         // 0x0053: 0=OFF 1-13
+  u8 pf1_long;          // 0x0054: 0=OFF 1-13
+  u8 pf2_short;         // 0x0055: 0=OFF 1-13
   u8 scan_qt;           // 0x0056: 0=OFF 1=ON
-  u8 startup_msg[7];    // 0x0057-0x005D
-  u8 unknown_5e[2];
-  u8 id_control[4];     // 0x0060-0x0063
-  u8 unknown_64[2];
+  u8 startup_msg[9];    // 0x0057-0x005F: up to 9 chars, space-padded (0x29)
+  u8 dtmf_id1[6];       // 0x0060-0x0065: DTMF ID string 1, space-padded (0x29)
   u8 dtmf_tx_time;      // 0x0066: 0-45 (50+x*10 ms)
   u8 dtmf_interval;     // 0x0067: 0-45 (50+x*10 ms)
   u8 unknown_68;
   u8 be_control;        // 0x0069: 0=OFF 1=ON
-  u8 id_edit[4];        // 0x006A-0x006D
-  u8 unknown_6e[2];
+  u8 dtmf_id2[6];       // 0x006A-0x006F: DTMF ID string 2 (ID-EDIT), space-padded (0x29)
   u8 timer;             // 0x0070: 0=OFF 1=ON
-  u8 rpt_rct;           // 0x0071: 0=OFF 1=ON
+  u8 unknown_71;
+  u8 unknown_72[4];     // 0x0072-0x0075
+  u8 language;          // 0x0076: 0=English 1=Chinese
+  u8 a_ptt_enable;      // 0x0077: 0=enabled 1=disabled (inverted)
 } settings;
 
 #seekto 0x2680;
@@ -171,7 +173,7 @@ LIST_VOX_DELAY = ["1S", "2S", "3S", "4S", "5S"]
 LIST_LOCK_MODE = ["Key", "Key+PTT", "Key+Enc", "Key+All"]
 LIST_ALERT_TONE = ["1000Hz", "1450Hz", "1750Hz", "2100Hz"]
 LIST_TONE_SAVE = ["RX", "TX", "TX+RX"]
-LIST_PF_KEY = ["Scan", "Backlight", "VOX", "TX Power", "Call",
+LIST_PF_KEY = ["Off", "Scan", "Backlight", "VOX", "TX Power", "Call",
                "Talk-Around", "Flashlight", "Monitor", "Reverse",
                "WorkMode", "Alarm", "SOS", "Favorite"]
 LIST_SIDETONE = ["Off", "DT-ST", "ANI-ST", "DT+ANI"]
@@ -185,6 +187,7 @@ LIST_VFO_STEP = ["2.5K", "5K", "6.25K", "8.33K", "10K", "12.5K",
 LIST_SP_MUTE = ["QT", "QT*DT", "QT+DT"]
 LIST_DESCRAMBLE = ["Off"] + [str(i) for i in range(1, 9)]
 LIST_CALL_ID = [str(i) for i in range(1, 21)]
+LIST_ALARM = ["Off", "AM-R", "AM-RT", "AM-T"]
 
 # Combined tone list for VFO settings (Off, CTCSS x38, DCS-N x104, DCS-I x104)
 LIST_TONE_SETTING = (["Off"] +
@@ -223,20 +226,23 @@ POWER_LEVELS = [chirp_common.PowerLevel("Low", watts=2.00),
                 chirp_common.PowerLevel("High", watts=5.00)]
 
 
+# Character table used by the radio for names and messages.
+# Index 0='0'..9='9', 10='A'..35='Z', 36='-', 37='=', 38='+',
+# 39='*', 40='_', 41=' ' (also used as padding), 42='?', 43='.', 44='#'
+_CHAR_TABLE = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-=+*_ ?.#"
+_CHAR_TO_CODE = {c: i for i, c in enumerate(_CHAR_TABLE)}
+
+
 def _decode_name(raw_bytes):
     """Decode 6-byte EEPROM name using custom character encoding."""
     name = ""
     for b in raw_bytes:
         if b == 0xFF:
             break
-        elif b == 0x29:
-            name += " "
-        elif b == 0x24:
-            name += "-"
-        elif 0x00 <= b <= 0x09:
-            name += str(b)
-        elif 0x0A <= b <= 0x23:
-            name += chr(ord('A') + b - 0x0A)
+        if b < len(_CHAR_TABLE):
+            name += _CHAR_TABLE[b]
+        else:
+            name += "?"
     return name.rstrip()
 
 
@@ -244,16 +250,9 @@ def _encode_name(name, length=6):
     """Encode a name string to EEPROM custom character encoding."""
     result = []
     for ch in name.upper()[:length]:
-        if ch == ' ':
-            result.append(0x29)
-        elif ch == '-':
-            result.append(0x24)
-        elif '0' <= ch <= '9':
-            result.append(int(ch))
-        elif 'A' <= ch <= 'Z':
-            result.append(ord(ch) - ord('A') + 0x0A)
+        result.append(_CHAR_TO_CODE.get(ch, 0x29))  # default to space
     while len(result) < length:
-        result.append(0xFF)
+        result.append(0x29)  # space padding, matches CPS behavior
     return result
 
 
@@ -303,6 +302,9 @@ def _send(serial, data):
         time.sleep(0.002)
 
 
+_MODEL_ID = 0x22  # KG-S88G model identifier
+
+
 def _do_handshake(radio, magic):
     """Perform the handshake with the radio.
 
@@ -310,16 +312,19 @@ def _do_handshake(radio, magic):
     1. TX 8 bytes: 0x02 + magic (5 bytes) + 0xFF 0xFF  (plaintext)
     2. RX 1 byte: 0x06 ACK
     3. TX 16 bytes: key material (plaintext, NOT encrypted)
-         key_material[0]  = 0xa5  (required magic byte, validated by radio)
-         key_material[1]  = arbitrary byte A
-         key_material[2]  = arbitrary byte
-         key_material[3]  = arbitrary byte B
-         key_material[4..7]  = arbitrary
-         key_material[8..15] = arbitrary (radio echoes these back)
-         data_phase_key   = A XOR B  (km[1] XOR km[3])
-    4. RX 12 bytes: radio identity (mostly constant across sessions, plaintext)
+         km[0]     = 0xa5  (required magic byte, validated by radio)
+         km[1..15] = 15 random bytes
+         data_phase_key = km[1] XOR km[3]
+    4. RX 12 bytes: identity response (plaintext)
+         [0]    = 0x50 'P' (program mode ACK)
+         [1:5]  = band 1 lo/hi BCD frequency (4 bytes)
+         [5:9]  = band 2 lo/hi BCD frequency (4 bytes)
+         [9]    = model checksum (derived from key material)
+         [10]   = reserved (observed as 0x00)
+         [11]   = model ID (0x22 for KG-S88G)
     5. TX 1 byte: 0x06 ACK
     6. RX 18 bytes: key response — contains km[8..15] echoed at bytes [9..16]
+                    byte 0 is the confirm checksum (derived from key material)
     7. TX 1 byte: 0x06 ACK
     8. RX 1 byte: 0x06 final ACK
 
@@ -371,13 +376,30 @@ def _do_handshake(radio, magic):
 
     # Step 3: Send key material as PLAINTEXT (not encrypted).
     # km[0] = 0xa5 is a required magic byte the radio validates.
-    # km[1..3] determine the data-phase cipher key: key = km[1] XOR km[3].
-    # Using km[1]=km[3]=0x00 gives data_phase_key = 0x00 (predictable).
-    km = bytes([0xa5]) + b"\x00" * 15
+    # km[1..15] are random; the radio derives checksums from them
+    # to prove it decoded the key, and the cipher key is computed
+    # as km[1] XOR km[3].
+    rand = list(os.urandom(15))
+    km = bytes([0xa5] + rand)
     LOG.debug("Handshake TX key material: %s" % km.hex())
     _send(serial, km)
     if has_echo:
         serial.read(16)
+
+    # Derive cipher key: km[1] XOR km[3] = rand[0] XOR rand[2]
+    data_phase_key = rand[0] ^ rand[2]
+
+    # Derive model checksum - radio places this in identity byte [9]
+    s = (rand[13] + rand[10] + rand[8] + rand[7]
+         + rand[5] + rand[3]) & 0xFF
+    chk_model = rand[6] ^ ((rand[4] + rand[2]
+                             + (rand[14] ^ s)) & 0xFF)
+
+    # Derive confirm checksum - radio sends this as a standalone byte
+    s = (rand[12] + rand[9] + rand[7] + rand[6]
+         + rand[4] + rand[2]) & 0xFF
+    chk_confirm = rand[5] ^ ((rand[3] + rand[1]
+                               + (rand[13] ^ s)) & 0xFF)
 
     # Step 4: Read 12-byte identity response (mostly constant plaintext)
     resp1 = serial.read(12)
@@ -389,6 +411,18 @@ def _do_handshake(radio, magic):
             "buffer: %s)" % (len(resp1), resp1.hex() if resp1 else "none",
                              extra.hex() if extra else "none"))
     LOG.debug("Handshake RX identity: %s" % resp1.hex())
+
+    if resp1[0] != 0x50:
+        raise errors.RadioError(
+            "Expected program mode ACK (0x50), got 0x%02x" % resp1[0])
+    if resp1[9] != chk_model:
+        raise errors.RadioError(
+            "Model checksum mismatch: expected 0x%02x, got 0x%02x" %
+            (chk_model, resp1[9]))
+    if resp1[11] != _MODEL_ID:
+        raise errors.RadioError(
+            "Unexpected model ID 0x%02x (expected 0x%02x)" %
+            (resp1[11], _MODEL_ID))
 
     # Step 5: ACK
     _send(serial, b"\x06")
@@ -404,6 +438,10 @@ def _do_handshake(radio, magic):
             "Radio did not send key response (got %d bytes: %s, "
             "buffer: %s)" % (len(resp2), resp2.hex() if resp2 else "none",
                              extra.hex() if extra else "none"))
+    if resp2[0] != chk_confirm:
+        raise errors.RadioError(
+            "Confirm checksum mismatch: expected 0x%02x, got 0x%02x" %
+            (chk_confirm, resp2[0]))
     LOG.debug("Handshake RX key response: %s" % resp2.hex())
 
     # Step 7: ACK
@@ -418,8 +456,6 @@ def _do_handshake(radio, magic):
             "Radio did not send final ACK (got %s)" %
             (final.hex() if final else "nothing"))
 
-    # Derive data-phase cipher key from key material
-    data_phase_key = km[1] ^ km[3]  # = 0x00 XOR 0x00 = 0x00
     cipher = RollingXOR(data_phase_key)
     LOG.debug("Handshake complete, data_phase_key=0x%02x, echo=%s" %
               (data_phase_key, has_echo))
@@ -443,7 +479,7 @@ def do_download(radio):
     status.cur = 0
     status.max = radio._memsize
 
-    for addr in range(0x0000, 0x27D0, 0x10):
+    for addr in range(0x0000, 0x27E0, 0x10):  # 638 blocks x 16 bytes
         # Build TX: [0x57][addr_hi][addr_mid][addr_lo][0x10]
         tx = bytes([0x57,
                     (addr >> 16) & 0xFF,
@@ -492,12 +528,15 @@ def do_upload(radio):
 
     mmap = radio.get_mmap()
 
-    # Recompute channel presence bitmaps from actual channel data.
-    # The radio maintains a 50-byte bitmap at 0x2500 (and a copy at 0x2600)
-    # where channel CH is active when bit (CH % 8) of byte (CH // 8) is set.
-    # If this bitmap doesn't match the written channel data the radio silently
-    # ignores channels that are not listed in it.
-    bitmap = bytearray(50)
+    # Recompute channel presence bitmap from actual channel data.
+    # The radio maintains a 51-byte bitmap at 0x2500 where channel CH is
+    # active when bit (CH % 8) of byte (CH // 8) is set.  If this bitmap
+    # doesn't match the written channel data the radio silently ignores
+    # channels that are not listed in it.
+    # NOTE: 0x2600 is scan group 1 (not a copy of the presence bitmap).
+    # We only update the presence bitmap at 0x2500, leaving scan groups
+    # (0x2600 = group 1, 0x2680 = group 2/favorites) intact.
+    bitmap = bytearray(51)  # 51 bytes needed: ch 400 → byte 50, bit 0
     for ch in range(1, 401):
         ch_off = 0x0100 + ch * 16
         rx_bytes = bytes(mmap[ch_off:ch_off + 4])
@@ -505,14 +544,13 @@ def do_upload(radio):
             bitmap[ch // 8] |= (1 << (ch % 8))
     for i, b in enumerate(bitmap):
         mmap[0x2500 + i] = b
-        mmap[0x2600 + i] = b
 
     status = chirp_common.Status()
     status.msg = "Cloning to radio"
     status.cur = 0
     status.max = radio._memsize
 
-    for addr in range(0x0000, 0x27D0, 0x10):
+    for addr in range(0x0000, 0x27E0, 0x10):  # 638 blocks x 16 bytes
         chunk = bytes(mmap[addr:addr + 0x10])
 
         # Build 21-byte write packet: [0x57][addr_hi][addr_mid][addr_lo][0x10][16 data]
@@ -547,7 +585,7 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
     VENDOR = "Wouxun"
     MODEL = "KG-S88G"
     BAUD_RATE = 9600
-    _memsize = 0x27D0
+    _memsize = 0x27E0  # 638 blocks x 16 bytes = 10208
     _num_channels = 400
 
     def get_features(self):
@@ -561,7 +599,7 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
         rf.has_name = True
         rf.can_odd_split = True
         rf.valid_name_length = 6
-        rf.valid_characters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ- "
+        rf.valid_characters = _CHAR_TABLE
         rf.valid_skips = []
         rf.valid_tmodes = ["", "Tone", "TSQL", "DTCS", "Cross"]
         rf.valid_cross_modes = ["Tone->Tone", "Tone->DTCS", "DTCS->Tone",
@@ -740,6 +778,14 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
                    "transmitting radio's scramble setting.")
         mem.extra.append(rs)
 
+        alarm_val = min(int(_mem.alarm), len(LIST_ALARM) - 1)
+        rs = RadioSetting("alarm", "Alarm",
+                          RadioSettingValueList(
+                              LIST_ALARM, current_index=alarm_val))
+        rs.set_doc("Alarm mode: Off, AM-R (alarm+receive), "
+                   "AM-RT (alarm+receive+transmit), AM-T (alarm+transmit).")
+        mem.extra.append(rs)
+
         byte_idx = number // 8
         bit_idx = number % 8
         is_fav = bool(int(self._memobj.favorites.map[byte_idx]) &
@@ -814,6 +860,8 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
                     _mem.sp_mute = val.get_options().index(str(val))
                 elif name == "descramble":
                     _mem.descramble = val.get_options().index(str(val))
+                elif name == "alarm":
+                    _mem.alarm = val.get_options().index(str(val))
                 elif name == "favorite":
                     byte_idx = mem.number // 8
                     bit_idx = mem.number % 8
@@ -879,6 +927,23 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
             "Announce menu selections and status changes by voice."))
 
         basic.append(rs(
+            "settings.reverse_freq", "Reverse Frequency",
+            RadioSettingValueBoolean(bool(_s.reverse_freq)),
+            "Swap TX and RX frequencies (reverse listen)."))
+
+        basic.append(rs(
+            "settings.dual_rx", "Dual Receive",
+            RadioSettingValueBoolean(bool(_s.dual_rx)),
+            "Enable simultaneous monitoring of two channels."))
+
+        LIST_LANGUAGE = ["English", "Chinese"]
+        lang_val = min(int(_s.language), len(LIST_LANGUAGE) - 1)
+        basic.append(rs(
+            "settings.language", "Language",
+            RadioSettingValueList(LIST_LANGUAGE, current_index=lang_val),
+            "Menu and voice prompt language."))
+
+        basic.append(rs(
             "settings.work_mode", "Work Mode",
             RadioSettingValueList(LIST_WORK_MODE,
                                   current_index=int(_s.work_mode)),
@@ -905,16 +970,16 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
             RadioSettingValueInteger(1, 400, int(_s.active_channel)),
             "The channel the radio will be on when powered on (1-400)."))
 
-        # Startup message (7-char EEPROM encoding)
-        msg = _decode_name([int(_s.startup_msg[i]) for i in range(7)])
-        val = RadioSettingValueString(0, 7, msg)
+        # Startup message (up to 9 chars, EEPROM encoding)
+        msg = _decode_name([int(_s.startup_msg[i]) for i in range(9)])
+        val = RadioSettingValueString(0, 9, msg)
         r = RadioSetting("startup_msg", "Startup Message", val)
         r.set_doc("Text shown at power-on when Startup Display is set to "
-                  "Message. Up to 7 characters (A-Z, 0-9, space, hyphen).")
+                  "Message. Up to 9 characters.")
 
         def apply_startup_msg(setting, obj):
-            encoded = _encode_name(str(setting.value), 7)
-            for i in range(7):
+            encoded = _encode_name(str(setting.value), 9)
+            for i in range(9):
                 obj.settings.startup_msg[i] = encoded[i]
 
         r.set_apply_callback(apply_startup_msg, self._memobj)
@@ -1023,12 +1088,12 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
 
         # ── PF Keys ────────────────────────────────────────────────────────
         pf_doc = ("Programmable function key assignment. Available functions: "
-                  "Scan, Backlight, VOX, TX Power, Call, Talk-Around, "
+                  "Off, Scan, Backlight, VOX, TX Power, Call, Talk-Around, "
                   "Flashlight, Monitor, Reverse, WorkMode, Alarm, SOS, "
                   "Favorite.")
 
         def pf_setting(name, label, val):
-            idx = max(0, min(int(val) - 1, len(LIST_PF_KEY) - 1))
+            idx = max(0, min(int(val), len(LIST_PF_KEY) - 1))
             r = RadioSetting(name, label,
                              RadioSettingValueList(LIST_PF_KEY,
                                                    current_index=idx))
@@ -1103,20 +1168,36 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
             RadioSettingValueBoolean(bool(_s.be_control)),
             "Enable call control via DTMF beep codes."))
 
-        # ID-EDIT: 4-byte DTMF identity, last byte is 'F' terminator
-        id_edit_raw = [int(_s.id_edit[i]) for i in range(4)]
-        id_edit_str = _decode_name(id_edit_raw).rstrip('F')
-        r = RadioSetting("id_edit", "ID-EDIT",
-                         RadioSettingValueString(0, 3, id_edit_str))
-        r.set_doc("This radio's DTMF identity code (up to 3 digits). "
+        # DTMF ID 1 (6-byte field at 0x60)
+        id1_raw = [int(_s.dtmf_id1[i]) for i in range(6)]
+        id1_str = _decode_name(id1_raw)
+        r = RadioSetting("dtmf_id1", "DTMF ID 1",
+                         RadioSettingValueString(0, 6, id1_str))
+        r.set_doc("DTMF identity code 1 (up to 6 digits). "
+                  "Used for ID Control / selective calling.")
+
+        def apply_dtmf_id1(setting, obj):
+            encoded = _encode_name(str(setting.value), 6)
+            for i in range(6):
+                obj.settings.dtmf_id1[i] = encoded[i]
+
+        r.set_apply_callback(apply_dtmf_id1, self._memobj)
+        dtmf.append(r)
+
+        # DTMF ID 2 / ID-EDIT (6-byte field at 0x6A)
+        id2_raw = [int(_s.dtmf_id2[i]) for i in range(6)]
+        id2_str = _decode_name(id2_raw)
+        r = RadioSetting("dtmf_id2", "DTMF ID 2 (ID-EDIT)",
+                         RadioSettingValueString(0, 6, id2_str))
+        r.set_doc("DTMF identity code 2 (up to 6 digits). "
                   "Used for PTT-ID transmission and DTMF call identification.")
 
-        def apply_id_edit(setting, obj):
-            encoded = _encode_name(str(setting.value) + 'F', 4)
-            for i in range(4):
-                obj.settings.id_edit[i] = encoded[i]
+        def apply_dtmf_id2(setting, obj):
+            encoded = _encode_name(str(setting.value), 6)
+            for i in range(6):
+                obj.settings.dtmf_id2[i] = encoded[i]
 
-        r.set_apply_callback(apply_id_edit, self._memobj)
+        r.set_apply_callback(apply_dtmf_id2, self._memobj)
         dtmf.append(r)
 
         # CALL IDs 1-20
@@ -1252,6 +1333,19 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
             "Repeater Roger Code Tone — transmit a tone when releasing "
             "the repeater to signal end of transmission."))
 
+        # B PTT Enable is inverted: 0=enabled, 1=disabled
+        options.append(rs(
+            "settings.b_ptt_enable", "B PTT Enable",
+            RadioSettingValueBoolean(not bool(_s.b_ptt_enable)),
+            "Enable the PTT button on the B (lower) band. When disabled, "
+            "PTT only transmits on the A band."))
+
+        # A PTT Enable is also inverted
+        options.append(rs(
+            "settings.a_ptt_enable", "A PTT Enable",
+            RadioSettingValueBoolean(not bool(_s.a_ptt_enable)),
+            "Enable the PTT button on the A (upper) band."))
+
         return top
 
     def set_settings(self, settings):
@@ -1287,10 +1381,8 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
                     # Voice is stored as 0 or 2 (not 0/1)
                     if field == "voice":
                         raw = 2 if raw else 0
-                    # PF keys and call_id are 1-indexed
-                    elif field in ("pf_top_long", "pf_top_short", "pf1_short",
-                                   "pf1_long", "pf2_short", "pf2_long",
-                                   "call_id"):
+                    # call_id is 1-indexed
+                    elif field == "call_id":
                         raw = raw + 1
                     # VOX delay stored as 1-5
                     elif field == "vox_delay":
@@ -1300,7 +1392,12 @@ class KGS88GRadio(chirp_common.CloneModeRadio,
                         raw = raw + 1
                     setattr(obj, field, raw)
                 elif isinstance(val, RadioSettingValueBoolean):
-                    setattr(obj, field, 1 if bool(val) else 0)
+                    # b_ptt_enable and a_ptt_enable are inverted in EEPROM
+                    # (0=enabled, 1=disabled)
+                    if field in ("b_ptt_enable", "a_ptt_enable"):
+                        setattr(obj, field, 0 if bool(val) else 1)
+                    else:
+                        setattr(obj, field, 1 if bool(val) else 0)
                 elif isinstance(val, RadioSettingValueInteger):
                     setattr(obj, field, int(val))
             except Exception:
