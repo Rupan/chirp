@@ -256,6 +256,23 @@ def _encode_name(name, length=6):
     return result
 
 
+def _decode_bcd_freq(data):
+    """Decode a 2-byte BCD frequency to MHz.
+
+    Each byte encodes two BCD digits; the 4-digit result represents a
+    frequency in tenths-of-MHz.  E.g. 0x40 0x00 -> 4000 -> 400.0 MHz.
+    Raises RadioError if any nibble is not valid BCD.
+    """
+    result = 0
+    for b in data:
+        hi, lo = b >> 4, b & 0x0F
+        if hi > 9 or lo > 9:
+            raise errors.RadioError(
+                "Invalid BCD byte 0x%02x in frequency data" % b)
+        result = result * 100 + hi * 10 + lo
+    return result / 10.0
+
+
 class RollingXOR:
     """Rolling XOR stream cipher used by the KG-S88G serial protocol.
 
@@ -303,6 +320,10 @@ def _send(serial, data):
 
 
 _MODEL_ID = 0x22  # KG-S88G model identifier
+
+# Band limits (MHz): fixed for KG-S88G
+_EXPECTED_BAND_LO = 400.0
+_EXPECTED_BAND_HI = 479.0
 
 
 def _do_handshake(radio, magic):
@@ -424,6 +445,23 @@ def _do_handshake(radio, magic):
             "Unexpected model ID 0x%02x (expected 0x%02x)" %
             (resp1[11], _MODEL_ID))
 
+    # Decode and verify band limits (radio is Part 95 certified, these are fixed)
+    band1_lo = _decode_bcd_freq(resp1[1:3])
+    band1_hi = _decode_bcd_freq(resp1[3:5])
+    band2_lo = _decode_bcd_freq(resp1[5:7])
+    band2_hi = _decode_bcd_freq(resp1[7:9])
+    LOG.debug("Identity bands: %.1f-%.1f, %.1f-%.1f MHz" %
+              (band1_lo, band1_hi, band2_lo, band2_hi))
+    for label, val, expected in [
+            ("band1_lo", band1_lo, _EXPECTED_BAND_LO),
+            ("band1_hi", band1_hi, _EXPECTED_BAND_HI),
+            ("band2_lo", band2_lo, _EXPECTED_BAND_LO),
+            ("band2_hi", band2_hi, _EXPECTED_BAND_HI)]:
+        if val != expected:
+            raise errors.RadioError(
+                "Unexpected %s: %.1f MHz (expected %.1f)" %
+                (label, val, expected))
+
     # Step 5: ACK
     _send(serial, b"\x06")
     if has_echo:
@@ -442,6 +480,31 @@ def _do_handshake(radio, magic):
         raise errors.RadioError(
             "Confirm checksum mismatch: expected 0x%02x, got 0x%02x" %
             (chk_confirm, resp2[0]))
+    # Key response layout (18 bytes read, 19th byte stays in buffer):
+    # [0]=confirm, [1]=radio ACK (0x06), [2]=0x00 reserved,
+    # [3:5]=band_hi, [5:7]=band_lo, [7:9]=band_hi,
+    # [9:17]=key echo (km[8:16]), [17]=0x00
+    kr_hi1 = _decode_bcd_freq(resp2[3:5])
+    kr_lo  = _decode_bcd_freq(resp2[5:7])
+    kr_hi2 = _decode_bcd_freq(resp2[7:9])
+    LOG.debug("Key response bands: lo=%.1f, hi=%.1f/%.1f MHz "
+              "(ack=0x%02x, reserved=0x%02x)" %
+              (kr_lo, kr_hi1, kr_hi2, resp2[1], resp2[2]))
+    for label, val, expected in [
+            ("key_resp band_hi1", kr_hi1, _EXPECTED_BAND_HI),
+            ("key_resp band_lo",  kr_lo,  _EXPECTED_BAND_LO),
+            ("key_resp band_hi2", kr_hi2, _EXPECTED_BAND_HI)]:
+        if val != expected:
+            raise errors.RadioError(
+                "Unexpected %s: %.1f MHz (expected %.1f)" %
+                (label, val, expected))
+    # Verify key echo: bytes [9..16] should mirror km[8..15]
+    key_echo = resp2[9:17]
+    km_tail = km[8:16]
+    if key_echo != km_tail:
+        raise errors.RadioError(
+            "Key echo mismatch: expected %s, got %s" %
+            (km_tail.hex(), key_echo.hex()))
     LOG.debug("Handshake RX key response: %s" % resp2.hex())
 
     # Step 7: ACK
